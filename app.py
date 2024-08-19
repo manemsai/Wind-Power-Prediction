@@ -3,8 +3,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split, cross_val_predict
+from sklearn.model_selection import train_test_split, cross_val_predict,cross_val_score
 from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from xgboost import XGBRegressor
@@ -23,7 +24,7 @@ tf.random.set_seed(seed)
 # Load and preprocess data
 @st.cache_data
 def load_data():
-    wind = pd.read_csv(r"E:\Clark\Capstone\Wind Power Prediction\Code\WIND.csv")
+    wind = pd.read_csv(r"D:\capstone projects\prediction_app\WIND.csv")
     wind['Date/Time'] = pd.to_datetime(wind['Date/Time'], format="%d %m %Y %H:%M")
     wind['Date'] = wind['Date/Time'].dt.normalize()
     wind['Hour'] = wind['Date/Time'].dt.hour
@@ -44,12 +45,32 @@ data = load_data()
 # Prepare the data
 X = data.drop(['LV ActivePower (kW)'], axis=1)
 y = data['LV ActivePower (kW)']
-
 # Train-Test Split
 split_ratio = 0.8
 split_index = int(len(data) * split_ratio)
 X_train, X_test = X[:split_index], X[split_index:]
 y_train, y_test = y[:split_index], y[split_index:]
+
+
+# Initialize scalers
+scaler_X = StandardScaler()
+scaler_y = StandardScaler()
+
+# Convert Pandas Series to NumPy arrays and reshape
+X_train_np = X_train.to_numpy()
+X_test_np = X_test.to_numpy()
+y_train_np = y_train.to_numpy().reshape(-1, 1)  # Reshape to 2D
+y_test_np = y_test.to_numpy().reshape(-1, 1)    # Reshape to 2D
+
+# Fit and transform the training features and target
+X_train_scaled = scaler_X.fit_transform(X_train_np)
+y_train_scaled = scaler_y.fit_transform(y_train_np).ravel()  # Flatten back to 1D
+
+# Transform the testing features and target
+X_test_scaled = scaler_X.transform(X_test_np)
+y_test_scaled = scaler_y.transform(y_test_np).ravel()
+
+
 
 # Streamlit app
 st.title("Wind Power Prediction")
@@ -76,17 +97,31 @@ input_data = pd.DataFrame({
 })
 
 # Model selection
-model_option = st.sidebar.selectbox("Select Model", ["Linear Regression", "XGBoost","LSTM"])
+model_option = st.sidebar.selectbox("Select Model", ["Linear Regression", "XGBoost with pipeline","LSTM"])
 
 if model_option == "Linear Regression":
     model = LinearRegression()
-    model.fit(X_train, y_train)
-    y_test_pred = model.predict(X_test)
+    model.fit(X_train_scaled, y_train_scaled)
+    y_test_pred_scaled = model.predict(X_test_scaled)
+
+    y_test_pred = scaler_y.inverse_transform(y_test_pred_scaled.reshape(-1, 1)).ravel()
+
+    # Calculate metrics
+    mae_lr = round(mean_absolute_error(y_test_scaled, y_test_pred_scaled), 2)
+    mse_lr = round(mean_squared_error(y_test_scaled, y_test_pred_scaled), 2)
+    rmse_lr = round(np.sqrt(mse_lr), 2)
+    r2_lr = round(r2_score(y_test_scaled, y_test_pred_scaled), 2)
     
     # Display the prediction
     prediction = model.predict(input_data)
     st.subheader("Prediction")
     st.write(f"Predicted Wind Power (kW): {prediction[0]:.2f}")
+
+    st.subheader("Metrics")
+    st.write(f"Mean Absolute Error (MAE): {mae_lr}")
+    st.write(f"Mean Squared Error (MSE): {mse_lr}")
+    st.write(f"Root Mean Squared Error (RMSE): {rmse_lr}")
+    st.write(f"R² Score: {r2_lr}")
     
     # Plot Actual vs Predicted
     st.subheader("Plots")
@@ -128,14 +163,56 @@ if model_option == "Linear Regression":
     plt.tight_layout()
     st.pyplot(plt)  # Display the plots in Streamlit
 
-elif model_option == "XGBoost":
-    pipeline = make_pipeline(StandardScaler(), XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, objective='reg:squarederror'))
-    predictions_cv = cross_val_predict(pipeline, X, y, cv=10)
+elif model_option == "XGBoost with pipeline":
+    pipeline = Pipeline([('scaler_X', scaler_X),('model', XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, objective='reg:squarederror'))])
+    X = np.array(X)  # Convert to NumPy arrays if they are not already
+    y = np.array(y)
+
+   
+
+    # Initialize scalers
+    scaler_X = StandardScaler()
+    scaler_y = StandardScaler()
+
+    # Reshape y to be a 2D column vector
+    y_reshaped = y.reshape(-1, 1)
+
+    # Fit and transform the features and target variable
+    X_scaled = scaler_X.fit_transform(X)
+    y_scaled = scaler_y.fit_transform(y_reshaped).ravel() 
+    predictions_cv_scaled = cross_val_predict(pipeline, X_scaled, y_scaled, cv=10)
+    predictions_cv=scaler_y.inverse_transform(predictions_cv_scaled.reshape(-1,1)).ravel()
+    y = pd.Series(y, index=data.index)
     predictions_cv = pd.Series(predictions_cv,index=y.index)
+
+    # Calculate metrics
+    cv_mse = cross_val_score(pipeline, X_scaled, y_scaled, cv=10, scoring='neg_mean_squared_error')
+
+    cv_mae = cross_val_score(pipeline, X_scaled, y_scaled, cv=10, scoring='neg_mean_absolute_error')
+
+    cv_r2scores = cross_val_score(pipeline, X_scaled, y_scaled, cv=10)
+
+    # Convert negative MSE to positive MSE
+    cv_mse = -cv_mse
+    # Convert negative MSE to positive MSE
+    cv_mae= -cv_mae
+
+
+    mse_cv_score = round(np.mean(cv_mse),2)
+    mae_cv_score = round(np.mean(cv_mae),2)
+    r2_cv_score=round(np.mean(cv_r2scores),2)
+    average_rmse = round((np.sqrt(mse_cv_score)),2)
+
+    st.subheader("Metrics")
+    st.write(f"Mean Absolute Error (MAE): {mae_cv_score}")
+    st.write(f"Mean Squared Error (MSE): {mse_cv_score}")
+    st.write(f"Root Mean Squared Error (RMSE): {average_rmse}")
+    st.write(f"R² Score: {r2_cv_score}")
+
 
 
     # Display the prediction
-    pipeline.fit(X, y)  # Fit on the entire data for prediction
+    pipeline.fit(X_scaled, y_scaled)  # Fit on the entire data for prediction
     prediction = pipeline.predict(input_data)
     st.subheader("Prediction")
     st.write(f"Predicted Wind Power (kW): {prediction[0]:.2f}")
@@ -194,7 +271,7 @@ elif model_option == "LSTM":
     X_test_scaled = X_test_scaled.reshape(X_test_scaled.shape[0], 1, X_test_scaled.shape[1])
 
     # Build LSTM model
-    model_load_path = r'E:\Clark\Capstone\Wind Power Prediction\Code\best_lstm_model_0.92.h5'
+    model_load_path = r'D:\capstone projects\prediction_app\best_lstm_model_0.92.h5'
    # Load the model
     model = tf.keras.models.load_model(model_load_path)
     predictions_scaled=model.predict(X_test_scaled)
