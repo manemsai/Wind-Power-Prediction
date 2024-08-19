@@ -164,22 +164,26 @@ if model_option == "Linear Regression":
     st.pyplot(plt)  # Display the plots in Streamlit
 
 elif model_option == "XGBoost with pipeline":
-    pipeline = Pipeline([('scaler_X', scaler_X),('model', XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, objective='reg:squarederror'))])
-    X = np.array(X)  # Convert to NumPy arrays if they are not already
-    y = np.array(y)
 
-   
 
     # Initialize scalers
     scaler_X = StandardScaler()
     scaler_y = StandardScaler()
+
+    pipeline = Pipeline([('scaler_X', scaler_X),('model', XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, objective='reg:squarederror'))])
+    
+    # Convert to NumPy arrays if they are not already
+    X = np.array(X)
+    y = np.array(y)
 
     # Reshape y to be a 2D column vector
     y_reshaped = y.reshape(-1, 1)
 
     # Fit and transform the features and target variable
     X_scaled = scaler_X.fit_transform(X)
-    y_scaled = scaler_y.fit_transform(y_reshaped).ravel() 
+    y_scaled = scaler_y.fit_transform(y_reshaped).ravel()
+
+
     predictions_cv_scaled = cross_val_predict(pipeline, X_scaled, y_scaled, cv=10)
     predictions_cv=scaler_y.inverse_transform(predictions_cv_scaled.reshape(-1,1)).ravel()
     y = pd.Series(y, index=data.index)
@@ -194,7 +198,7 @@ elif model_option == "XGBoost with pipeline":
 
     # Convert negative MSE to positive MSE
     cv_mse = -cv_mse
-    # Convert negative MSE to positive MSE
+    # Convert negative MSE to positive MSE 
     cv_mae= -cv_mae
 
 
